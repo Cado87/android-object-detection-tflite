@@ -1,3 +1,11 @@
+
+# TensorFlow Lite Object Detection for Android Studio Narwhal
+This app is an adaptation of an example demo contained in TensorFlow repository (https://github.com/tensorflow/examples/tree/master/lite/examples/object_detection/android).
+As you can see below, this sample has been tested on Android Studio Bumblebee from January 2022. What I did is to update the repository versions to be able to compile it in Android Studio Narwhal from June 2025.
+This project will be the base to develop and integrate new detection models to the app.
+
+
+
 # TensorFlow Lite Object Detection Android Demo
 
 ### Overview
