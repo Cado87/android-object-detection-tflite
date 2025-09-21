@@ -42,7 +42,7 @@ import java.util.concurrent.Executors
 import org.tensorflow.lite.examples.objectdetection.ObjectDetectorHelper
 import org.tensorflow.lite.examples.objectdetection.R
 import org.tensorflow.lite.examples.objectdetection.databinding.FragmentCameraBinding
-import org.tensorflow.lite.task.vision.detector.Detection
+import org.tensorflow.lite.examples.objectdetection.SimpleDetection
 
 class CameraFragment : Fragment(), ObjectDetectorHelper.DetectorListener {
 
@@ -297,7 +297,7 @@ class CameraFragment : Fragment(), ObjectDetectorHelper.DetectorListener {
     // Update UI after objects have been detected. Extracts original image height/width
     // to scale and place bounding boxes properly through OverlayView
     override fun onResults(
-      results: MutableList<Detection>?,
+      results: MutableList<SimpleDetection>?,
       inferenceTime: Long,
       imageHeight: Int,
       imageWidth: Int
@@ -308,7 +308,7 @@ class CameraFragment : Fragment(), ObjectDetectorHelper.DetectorListener {
 
             // Pass necessary information to OverlayView for drawing on the canvas
             fragmentCameraBinding.overlay.setResults(
-                results ?: LinkedList<Detection>(),
+                results ?: LinkedList<SimpleDetection>(),
                 imageHeight,
                 imageWidth
             )

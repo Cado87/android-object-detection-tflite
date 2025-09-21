@@ -27,11 +27,11 @@ import android.view.View
 import androidx.core.content.ContextCompat
 import java.util.LinkedList
 import kotlin.math.max
-import org.tensorflow.lite.task.vision.detector.Detection
+import org.tensorflow.lite.examples.objectdetection.SimpleDetection
 
 class OverlayView(context: Context?, attrs: AttributeSet?) : View(context, attrs) {
 
-    private var results: List<Detection> = LinkedList<Detection>()
+    private var results: List<SimpleDetection> = LinkedList<SimpleDetection>()
     private var boxPaint = Paint()
     private var textBackgroundPaint = Paint()
     private var textPaint = Paint()
@@ -104,7 +104,7 @@ class OverlayView(context: Context?, attrs: AttributeSet?) : View(context, attrs
     }
 
     fun setResults(
-      detectionResults: MutableList<Detection>,
+      detectionResults: MutableList<SimpleDetection>,
       imageHeight: Int,
       imageWidth: Int,
     ) {
