@@ -25,13 +25,22 @@ object YoloPostProcessor {
         // YOLO11n output format: [84, 8400] where 84 = [x, y, w, h, 80 class scores]
         val numDetections = output[0].size // 8400
         val numClasses = classNames.size // 80
+        val inputSize = 640f // YOLO model input size
         
         // Extract detections above confidence threshold
         for (i in 0 until numDetections) {
-            val x = output[0][i]
-            val y = output[1][i]
-            val w = output[2][i]
-            val h = output[3][i]
+            // YOLO11n TFLite appears to output very small coordinate values that need to be scaled up
+            // Based on logs showing values like 0.001288005, these seem to be normalized differently
+            val rawX = output[0][i]
+            val rawY = output[1][i]
+            val rawW = output[2][i]
+            val rawH = output[3][i]
+            
+            // Scale up the coordinates - they appear to be in a very small range
+            val x = rawX * inputSize
+            val y = rawY * inputSize
+            val w = rawW * inputSize
+            val h = rawH * inputSize
             
             // Find the class with highest confidence
             var maxScore = 0f
@@ -47,16 +56,31 @@ object YoloPostProcessor {
             
             // Apply confidence threshold
             if (maxScore >= confidenceThreshold && maxClass < classNames.size) {
+                // Convert from center coordinates to corner coordinates in pixel space
                 val left = x - w / 2f
                 val top = y - h / 2f
                 val right = x + w / 2f
                 val bottom = y + h / 2f
                 
+                // Now normalize to [0,1] range for consistency with other models
+                val normalizedLeft = (left / inputSize).coerceIn(0f, 1f)
+                val normalizedTop = (top / inputSize).coerceIn(0f, 1f)
+                val normalizedRight = (right / inputSize).coerceIn(0f, 1f)
+                val normalizedBottom = (bottom / inputSize).coerceIn(0f, 1f)
+                
+                // Debug logging for coordinate transformation
+                android.util.Log.d("YoloPostProcessor", 
+                    "Detection: class=${classNames[maxClass]} conf=$maxScore " +
+                    "raw_coords=($rawX, $rawY, $rawW, $rawH) " +
+                    "scaled=($x, $y, $w, $h) " +
+                    "bbox_pixels=($left, $top, $right, $bottom) " +
+                    "bbox_normalized=($normalizedLeft, $normalizedTop, $normalizedRight, $normalizedBottom)")
+                
                 val boundingBox = RectF(
-                    left.coerceIn(0f, 1f),
-                    top.coerceIn(0f, 1f),
-                    right.coerceIn(0f, 1f),
-                    bottom.coerceIn(0f, 1f)
+                    normalizedLeft,
+                    normalizedTop,
+                    normalizedRight,
+                    normalizedBottom
                 )
                 
                 detections.add(

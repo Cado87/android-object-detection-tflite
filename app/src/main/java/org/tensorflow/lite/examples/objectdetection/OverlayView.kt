@@ -23,6 +23,7 @@ import android.graphics.Paint
 import android.graphics.Rect
 import android.graphics.RectF
 import android.util.AttributeSet
+import android.util.Log
 import android.view.View
 import androidx.core.content.ContextCompat
 import java.util.LinkedList
@@ -37,6 +38,8 @@ class OverlayView(context: Context?, attrs: AttributeSet?) : View(context, attrs
     private var textPaint = Paint()
 
     private var scaleFactor: Float = 1f
+    private var imageWidth: Int = 0
+    private var imageHeight: Int = 0
 
     private var bounds = Rect()
 
@@ -69,13 +72,36 @@ class OverlayView(context: Context?, attrs: AttributeSet?) : View(context, attrs
     override fun draw(canvas: Canvas) {
         super.draw(canvas)
 
+        Log.d("OverlayView", "Drawing overlay with ${results.size} results")
         for (result in results) {
             val boundingBox = result.boundingBox
 
-            val top = boundingBox.top * scaleFactor
-            val bottom = boundingBox.bottom * scaleFactor
-            val left = boundingBox.left * scaleFactor
-            val right = boundingBox.right * scaleFactor
+            // Check if coordinates are normalized (YOLO) or pixel-based (Task API)
+            val isNormalized = results.isNotEmpty() && 
+                results.all { it.boundingBox.right <= 1.0f && it.boundingBox.bottom <= 1.0f }
+            
+            val top: Float
+            val bottom: Float
+            val left: Float
+            val right: Float
+            
+            if (isNormalized) {
+                // For YOLO normalized coordinates (0-1), directly map to view coordinates
+                // YOLO postprocessor already handles aspect ratio correction
+                val horizontalOffset = 50f  // Adjust this value to move box left/right
+                left = boundingBox.left * width + horizontalOffset
+                top = boundingBox.top * height
+                right = boundingBox.right * width + horizontalOffset
+                bottom = boundingBox.bottom * height
+            } else {
+                // Use traditional scaling for Task API pixel coordinates
+                left = boundingBox.left * scaleFactor
+                top = boundingBox.top * scaleFactor
+                right = boundingBox.right * scaleFactor
+                bottom = boundingBox.bottom * scaleFactor
+            }
+
+            Log.d("OverlayView", "Drawing box: left=$left, top=$top, right=$right, bottom=$bottom")
 
             // Draw bounding box around detected objects
             val drawableRect = RectF(left, top, right, bottom)
@@ -108,11 +134,35 @@ class OverlayView(context: Context?, attrs: AttributeSet?) : View(context, attrs
       imageHeight: Int,
       imageWidth: Int,
     ) {
+        Log.d("OverlayView", "Setting ${detectionResults.size} results, imageSize: ${imageWidth}x${imageHeight}, viewSize: ${width}x${height}")
         results = detectionResults
+        
+        // Store image dimensions for use in draw()
+        this.imageWidth = imageWidth
+        this.imageHeight = imageHeight
 
-        // PreviewView is in FILL_START mode. So we need to scale up the bounding box to match with
-        // the size that the captured images will be displayed.
-        scaleFactor = max(width * 1f / imageWidth, height * 1f / imageHeight)
+        // For YOLO models, coordinates are already normalized [0,1], so we scale directly by view dimensions
+        // For Task API models, coordinates are in image pixel space, so we need the traditional scale factor
+        
+        // Check if coordinates are normalized (YOLO) or pixel-based (Task API)
+        // YOLO coordinates are typically in [0,1] range, while Task API coordinates are larger
+        val isNormalized = detectionResults.isNotEmpty() && 
+            detectionResults.all { it.boundingBox.right <= 1.0f && it.boundingBox.bottom <= 1.0f }
+        
+        if (isNormalized) {
+            // YOLO case: coordinates are normalized (0-1), no additional scaling needed
+            scaleFactor = 1.0f
+            Log.d("OverlayView", "Using normalized coordinates (YOLO), direct mapping to view")
+        } else {
+            // Task API case: coordinates are in image pixel space, need scaling
+            scaleFactor = max(width * 1f / imageWidth, height * 1f / imageHeight)
+            Log.d("OverlayView", "Using pixel coordinates (Task API), scale factor: $scaleFactor")
+        }
+        
+        results.forEachIndexed { index, result ->
+            val bb = result.boundingBox
+            Log.d("OverlayView", "Result $index: label=${result.categories[0].label}, score=${result.categories[0].score}, box=[${bb.left}, ${bb.top}, ${bb.right}, ${bb.bottom}]")
+        }
     }
 
     companion object {

@@ -22,7 +22,7 @@ import java.nio.channels.FileChannel
  */
 class YoloDetector(
     private val context: Context,
-    var confidenceThreshold: Float = 0.5f,
+    var confidenceThreshold: Float = 0.1f,
     var iouThreshold: Float = 0.3f,
     var maxResults: Int = 3,
     var numThreads: Int = 2,
@@ -35,6 +35,10 @@ class YoloDetector(
     private var interpreter: Interpreter? = null
     private var classNames: Array<String> = emptyArray()
     private var inputSize = 640 // Default YOLO input size
+    
+    // Reusable buffers for performance optimization
+    private var inputBuffer: ByteBuffer? = null
+    private var outputBuffer: Array<Array<FloatArray>>? = null
     
     companion object {
         private const val TAG = "YoloDetector"
@@ -62,18 +66,22 @@ class YoloDetector(
             Log.d(TAG, "Configuring interpreter options...")
             val options = Interpreter.Options().apply {
                 setNumThreads(numThreads)
+                setUseXNNPACK(true) // Enable XNNPACK for better CPU performance
                 
                 if (useGpu && CompatibilityList().isDelegateSupportedOnThisDevice) {
                     try {
                         val delegateOptions = CompatibilityList().bestOptionsForThisDevice
-                        val gpuDelegate = GpuDelegate(delegateOptions.setQuantizedModelsAllowed(true))
+                            .setQuantizedModelsAllowed(true)
+                            .setInferencePreference(GpuDelegate.Options.INFERENCE_PREFERENCE_FAST_SINGLE_ANSWER)
+                        val gpuDelegate = GpuDelegate(delegateOptions)
                         addDelegate(gpuDelegate)
-                        Log.d(TAG, "GPU delegate enabled")
+                        Log.d(TAG, "GPU delegate enabled with fast single answer preference")
                     } catch (e: Exception) {
                         Log.w(TAG, "Failed to enable GPU delegate: ${e.message}")
+                        Log.d(TAG, "Falling back to optimized CPU inference")
                     }
                 } else {
-                    Log.d(TAG, "Using CPU inference")
+                    Log.d(TAG, "Using optimized CPU inference with XNNPACK")
                 }
             }
             
@@ -89,11 +97,48 @@ class YoloDetector(
             Log.d(TAG, "Output shape: ${outputShape?.contentToString()}")
             Log.d(TAG, "Number of classes: ${classNames.size}")
             
+            // Warm up the model with a dummy inference to reduce first-run latency
+            warmUpModel()
+            
             true
         } catch (e: Exception) {
             Log.e(TAG, "Error loading model: ${e.message}", e)
             false
         }
+    }
+    
+    /**
+     * Warm up the model to reduce first inference latency
+     */
+    private fun warmUpModel() {
+        try {
+            Log.d(TAG, "Warming up model...")
+            
+            // Initialize reusable buffers during warm-up
+            initializeBuffers()
+            
+            // Use the reusable buffers for warm-up
+            val warmupInput = inputBuffer ?: return
+            warmupInput.rewind()
+            val warmupOutput = outputBuffer ?: return
+            
+            interpreter?.run(warmupInput, warmupOutput)
+            Log.d(TAG, "Model warm-up completed with buffer initialization")
+        } catch (e: Exception) {
+            Log.w(TAG, "Model warm-up failed: ${e.message}")
+        }
+    }
+    
+    /**
+     * Initialize reusable buffers for optimal performance
+     */
+    private fun initializeBuffers() {
+        val bufferSize = BATCH_SIZE * inputSize * inputSize * PIXEL_SIZE * NUM_BYTES_PER_CHANNEL
+        inputBuffer = ByteBuffer.allocateDirect(bufferSize).apply {
+            order(ByteOrder.nativeOrder())
+        }
+        outputBuffer = Array(1) { Array(84) { FloatArray(8400) } }
+        Log.d(TAG, "Initialized reusable buffers: input=${bufferSize}bytes, output=1x84x8400")
     }
     
     /**
@@ -144,21 +189,25 @@ class YoloDetector(
             val preprocessedImage = preprocessImage(image, imageRotation)
             Log.d(TAG, "Preprocessed image to ${preprocessedImage.width}x${preprocessedImage.height}")
             
-            // Prepare input buffer with explicit size calculation
-            val inputBufferSize = BATCH_SIZE * inputSize * inputSize * PIXEL_SIZE * NUM_BYTES_PER_CHANNEL
-            Log.d(TAG, "Allocating input buffer of size: $inputBufferSize bytes")
-            
-            val inputBuffer = ByteBuffer.allocateDirect(inputBufferSize).apply {
-                order(ByteOrder.nativeOrder())
-                rewind()
+            // Use reusable buffers for optimal performance
+            val currentInputBuffer = inputBuffer ?: run {
+                Log.w(TAG, "Input buffer not initialized, creating new one")
+                ByteBuffer.allocateDirect(BATCH_SIZE * inputSize * inputSize * PIXEL_SIZE * NUM_BYTES_PER_CHANNEL).apply {
+                    order(ByteOrder.nativeOrder())
+                }
             }
             
-            // Convert preprocessed image to input buffer
-            imageToBuffer(preprocessedImage, inputBuffer)
-            Log.d(TAG, "Converted image to input buffer")
+            val currentOutputBuffer = outputBuffer ?: run {
+                Log.w(TAG, "Output buffer not initialized, creating new one")
+                Array(1) { Array(84) { FloatArray(8400) } }
+            }
             
-            // Prepare output buffer - YOLO11n outputs [1, 84, 8400]
-            val outputBuffer = Array(1) { Array(84) { FloatArray(8400) } }
+            // Clear and rewind the input buffer
+            currentInputBuffer.rewind()
+            
+            // Convert preprocessed image to input buffer
+            imageToBuffer(preprocessedImage, currentInputBuffer)
+            Log.d(TAG, "Converted image to input buffer")
             
             // Run inference
             Log.d(TAG, "Running inference...")
@@ -171,10 +220,7 @@ class YoloDetector(
             }
             
             try {
-                currentInterpreter.runForMultipleInputsOutputs(
-                    arrayOf(inputBuffer),
-                    mapOf(0 to outputBuffer)
-                )
+                currentInterpreter.run(currentInputBuffer, currentOutputBuffer)
             } catch (e: IllegalStateException) {
                 Log.e(TAG, "Interpreter in invalid state: ${e.message}")
                 return null
@@ -188,7 +234,7 @@ class YoloDetector(
             
             // Post-process results
             val detections = YoloPostProcessor.processOutput(
-                output = outputBuffer[0],
+                output = currentOutputBuffer[0],
                 confidenceThreshold = confidenceThreshold,
                 iouThreshold = iouThreshold,
                 maxResults = maxResults,
@@ -197,11 +243,10 @@ class YoloDetector(
             
             Log.d(TAG, "Found ${detections.size} detections")
             
-            // Scale bounding boxes back to original image dimensions
-            val scaledDetections = scaleDetections(detections, image.width, image.height)
-            
+            // Don't scale here - let OverlayView handle scaling like Task API does
+            // Return detections with normalized coordinates [0,1]
             return YoloResult(
-                detections = scaledDetections,
+                detections = detections,
                 inferenceTime = inferenceTime,
                 imageWidth = image.width,
                 imageHeight = image.height
@@ -258,6 +303,11 @@ class YoloDetector(
                 detection.boundingBox.right * imageWidth,
                 detection.boundingBox.bottom * imageHeight
             )
+            
+            Log.d(TAG, "Scaling detection ${detection.label}: " +
+                "normalized=(${detection.boundingBox.left}, ${detection.boundingBox.top}, ${detection.boundingBox.right}, ${detection.boundingBox.bottom}) " +
+                "imageSize=($imageWidth x $imageHeight) " +
+                "scaled=(${scaledBox.left}, ${scaledBox.top}, ${scaledBox.right}, ${scaledBox.bottom})")
             
             detection.copy(boundingBox = scaledBox)
         }
@@ -336,6 +386,10 @@ class YoloDetector(
             
             interpreter?.close()
             interpreter = null
+            
+            // Clean up reusable buffers
+            inputBuffer = null
+            outputBuffer = null
         }
     }
 }

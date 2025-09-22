@@ -203,6 +203,10 @@ class CameraFragment : Fragment(), ObjectDetectorHelper.DetectorListener {
         // Needs to be cleared instead of reinitialized because the GPU
         // delegate needs to be initialized on the thread using it when applicable
         objectDetectorHelper.clearObjectDetector()
+        
+        // Reinitialize the detector with new settings/model
+        objectDetectorHelper.setupObjectDetector()
+        
         fragmentCameraBinding.overlay.clear()
     }
 

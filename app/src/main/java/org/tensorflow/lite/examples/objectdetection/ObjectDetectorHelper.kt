@@ -1,20 +1,22 @@
 /*
  * Copyright 2022 The TensorFlow Authors. All Rights Reserved.    fun clearObjectDetector() {
+    fun clearObjectDetector() {
         synchronized(this) {
             try {
-                // Shutdown the inference executor
-                inferenceExecutor.shutdown()
+                // Clean up Task API detector
+                objectDetector?.close()
+                objectDetector = null
                 
-                // Temporarily disabled Task API
-                // objectDetector?.close()
-                // objectDetector = null
+                // Clean up YOLO detector
                 yoloDetector?.close()
                 yoloDetector = null
+                
                 Log.d("ObjectDetectorHelper", "Detectors cleared successfully")
             } catch (e: Exception) {
                 Log.e("ObjectDetectorHelper", "Error clearing detectors: ${e.message}", e)
             }
         }
+    }
     }ed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
@@ -41,11 +43,10 @@ import org.tensorflow.lite.support.image.ops.ResizeOp
 import java.util.concurrent.Executors
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.atomic.AtomicBoolean
-// Temporarily disabled Task API imports
-// import org.tensorflow.lite.task.core.BaseOptions
-// import org.tensorflow.lite.task.vision.detector.Detection
-// import org.tensorflow.lite.task.vision.detector.ObjectDetector
-// import org.tensorflow.lite.support.label.Category
+import org.tensorflow.lite.task.core.BaseOptions
+import org.tensorflow.lite.task.vision.detector.Detection
+import org.tensorflow.lite.task.vision.detector.ObjectDetector
+import org.tensorflow.lite.support.label.Category
 import org.tensorflow.lite.examples.objectdetection.yolo.YoloDetector
 import org.tensorflow.lite.examples.objectdetection.yolo.YoloDetection
 import org.tensorflow.lite.examples.objectdetection.yolo.YoloResult
@@ -58,22 +59,21 @@ class ObjectDetectorHelper(
   var numThreads: Int = 2,
   var maxResults: Int = 3,
   var currentDelegate: Int = 0,
-  var currentModel: Int = 0,
+  var currentModel: Int = MODEL_MOBILENETV1, // Default to MobileNet V1
   val context: Context,
   val objectDetectorListener: DetectorListener?
 ) {
 
     // For this example this needs to be a var so it can be reset on changes. If the ObjectDetector
     // will not change, a lazy val would be preferable.
-    // Temporarily disabled Task API
-    // private var objectDetector: ObjectDetector? = null
+    private var objectDetector: ObjectDetector? = null
     
     // YOLO detector for YOLO11n models
     private var yoloDetector: YoloDetector? = null
     
-    // Track whether we're using YOLO or Task API - for now, force YOLO only
-    private val isYoloModel: Boolean = true
-        // get() = currentModel == MODEL_YOLO11N_FLOAT16 || currentModel == MODEL_YOLO11N_FLOAT32
+    // Track whether we're using YOLO or Task API
+    private val isYoloModel: Boolean
+        get() = currentModel == MODEL_YOLO11N_FLOAT16 || currentModel == MODEL_YOLO11N_FLOAT32
 
     init {
         setupObjectDetector()
@@ -117,8 +117,14 @@ class ObjectDetectorHelper(
             Thread.currentThread().interrupt()
         }
         
-        // For now, always use YOLO
-        setupYoloDetector()
+        // Route to appropriate detector based on model selection
+        if (isYoloModel) {
+            Log.d("ObjectDetectorHelper", "Setting up YOLO detector for model: $currentModel")
+            setupYoloDetector()
+        } else {
+            Log.d("ObjectDetectorHelper", "Setting up Task API detector for model: $currentModel")
+            setupTaskApiDetector()
+        }
     }
     
     private fun setupYoloDetector() {
@@ -128,8 +134,8 @@ class ObjectDetectorHelper(
                 context = context,
                 confidenceThreshold = threshold,
                 maxResults = maxResults,
-                numThreads = numThreads,
-                useGpu = false  // Disable GPU for YOLO to prevent conflicts
+                numThreads = 4, // Increase threads for better performance
+                useGpu = true  // Enable GPU acceleration for YOLO performance
             )
             
             val modelName = when (currentModel) {
@@ -155,8 +161,7 @@ class ObjectDetectorHelper(
         }
     }
     
-    /*
-    // Temporarily disabled Task API methods
+    
     private fun setupTaskApiDetector() {
         // Create the base options for the detector using specifies max results and score threshold
         val optionsBuilder =
@@ -195,9 +200,12 @@ class ObjectDetectorHelper(
                 else -> "mobilenetv1.tflite"
             }
 
+        Log.d("ObjectDetectorHelper", "Setting up Task API with currentModel=$currentModel, modelName=$modelName")
+
         try {
             objectDetector =
                 ObjectDetector.createFromFileAndOptions(context, modelName, optionsBuilder.build())
+            Log.d("ObjectDetectorHelper", "Task API detector setup successful with model: $modelName")
         } catch (e: IllegalStateException) {
             objectDetectorListener?.onError(
                 "Object detector failed to initialize. See error logs for details"
@@ -205,7 +213,6 @@ class ObjectDetectorHelper(
             Log.e("ObjectDetectorHelper", "TFLite failed to load model with error: " + e.message)
         }
     }
-    */
 
     fun detect(image: Bitmap, imageRotation: Int) {
         // Skip if inference is already running to prevent backing up frames
@@ -215,9 +222,14 @@ class ObjectDetectorHelper(
         }
         
         try {
-            // For now, always use YOLO
-            Log.d("ObjectDetectorHelper", "Using YOLO detection path (YOLO-only mode)")
-            detectWithYolo(image, imageRotation)
+            // Route to appropriate detector based on model selection
+            if (isYoloModel) {
+                Log.d("ObjectDetectorHelper", "Using YOLO detection path for model: $currentModel")
+                detectWithYolo(image, imageRotation)
+            } else {
+                Log.d("ObjectDetectorHelper", "Using Task API detection path for model: $currentModel")
+                detectWithTaskApi(image, imageRotation)
+            }
         } catch (e: Exception) {
             Log.e("ObjectDetectorHelper", "Error in detect method: ${e.message}", e)
             objectDetectorListener?.onError("Detection failed: ${e.message}")
@@ -250,8 +262,15 @@ class ObjectDetectorHelper(
                     try {
                         if (result != null) {
                             Log.d("ObjectDetectorHelper", "YOLO detection successful: ${result.detections.size} objects found")
+                            result.detections.forEachIndexed { index, detection ->
+                                Log.d("ObjectDetectorHelper", "Detection $index: label=${detection.label}, confidence=${detection.confidence}, box=[${detection.boundingBox.left}, ${detection.boundingBox.top}, ${detection.boundingBox.right}, ${detection.boundingBox.bottom}]")
+                            }
                             // Convert YOLO detections to Task API format for compatibility
                             val simpleDetections = convertYoloToSimpleDetection(result.detections)
+                            Log.d("ObjectDetectorHelper", "Converted to ${simpleDetections.size} SimpleDetections")
+                            simpleDetections.forEachIndexed { index, simple ->
+                                Log.d("ObjectDetectorHelper", "SimpleDetection $index: label=${simple.categories[0].label}, score=${simple.categories[0].score}, box=[${simple.boundingBox.left}, ${simple.boundingBox.top}, ${simple.boundingBox.right}, ${simple.boundingBox.bottom}]")
+                            }
                             objectDetectorListener?.onResults(
                                 simpleDetections.toMutableList(),
                                 result.inferenceTime,
@@ -280,52 +299,92 @@ class ObjectDetectorHelper(
         }
     }
     
-    /*
-    // Temporarily disabled Task API detection method
+    
     private fun detectWithTaskApi(image: Bitmap, imageRotation: Int) {
-        if (objectDetector == null) {
+        // Skip if already processing
+        if (!isInferenceRunning.compareAndSet(false, true)) {
+            Log.d("ObjectDetectorHelper", "Task API detection already in progress, skipping frame")
+            return
+        }
+        
+        val detector = objectDetector
+        if (detector == null) {
+            isInferenceRunning.set(false)
             Log.w("ObjectDetectorHelper", "Task API detector is null, attempting to recreate...")
             setupObjectDetector()
             return
         }
 
-        try {
-            // Inference time is the difference between the system time at the start and finish of the
-            // process
-            var inferenceTime = SystemClock.uptimeMillis()
+        // Run inference on background thread to prevent ANR (same as YOLO)
+        inferenceExecutor.execute {
+            try {
+                Log.d("ObjectDetectorHelper", "Running Task API detection on background thread...")
+                
+                // Inference time is the difference between the system time at the start and finish of the process
+                var inferenceTime = SystemClock.uptimeMillis()
 
-            // Create preprocessor for the image.
-            // See https://www.tensorflow.org/lite/inference_with_metadata/
-            //            lite_support#imageprocessor_architecture
-            val imageProcessor =
-                ImageProcessor.Builder()
-                    .add(Rot90Op(-imageRotation / 90))
-                    .build()
+                // Create preprocessor for the image.
+                val imageProcessor =
+                    ImageProcessor.Builder()
+                        .add(Rot90Op(-imageRotation / 90))
+                        .build()
 
-            // Preprocess the image and convert it into a TensorImage for detection.
-            val tensorImage = imageProcessor.process(TensorImage.fromBitmap(image))
+                // Preprocess the image and convert it into a TensorImage for detection.
+                val tensorImage = imageProcessor.process(TensorImage.fromBitmap(image))
 
-            val results = objectDetector?.detect(tensorImage)
-            inferenceTime = SystemClock.uptimeMillis() - inferenceTime
-            
-            Log.d("ObjectDetectorHelper", "Task API detection successful: ${results?.size ?: 0} objects found")
-            objectDetectorListener?.onResults(
-                results,
-                inferenceTime,
-                tensorImage.height,
-                tensorImage.width)
-        } catch (e: Exception) {
-            Log.e("ObjectDetectorHelper", "Error in Task API detection: ${e.message}", e)
-            objectDetectorListener?.onError("Detection error: ${e.message}")
+                val results = detector.detect(tensorImage)
+                inferenceTime = SystemClock.uptimeMillis() - inferenceTime
+                
+                // Post results back to main thread
+                android.os.Handler(android.os.Looper.getMainLooper()).post {
+                    try {
+                        Log.d("ObjectDetectorHelper", "Task API detection successful: ${results?.size ?: 0} objects found")
+                        
+                        // Convert Task API Detection to SimpleDetection for compatibility
+                        val simpleDetections = results?.map { detection ->
+                            SimpleDetection.create(
+                                detection.boundingBox,
+                                detection.categories.map { category ->
+                                    SimpleDetection.Category.create(
+                                        category.label,
+                                        category.displayName ?: category.label,
+                                        category.score
+                                    )
+                                }
+                            )
+                        }?.toMutableList()
+                        
+                        objectDetectorListener?.onResults(
+                            simpleDetections,
+                            inferenceTime,
+                            tensorImage.height,
+                            tensorImage.width
+                        )
+                    } finally {
+                        isInferenceRunning.set(false)
+                    }
+                }
+            } catch (e: Exception) {
+                Log.e("ObjectDetectorHelper", "Error in Task API detection: ${e.message}", e)
+                // Post error back to main thread
+                android.os.Handler(android.os.Looper.getMainLooper()).post {
+                    try {
+                        objectDetectorListener?.onError("Task API detection error: ${e.message}")
+                    } finally {
+                        isInferenceRunning.set(false)
+                    }
+                }
+            }
         }
     }
-    */
     
     /**
      * Convert YOLO detections to SimpleDetection for UI display
      */
     private fun convertYoloToSimpleDetection(yoloDetections: List<YoloDetection>): List<SimpleDetection> {
-        return yoloDetections.map { yolo ->
+        val converted = yoloDetections.map { yolo ->
+            Log.d("ObjectDetectorHelper", "Converting YOLO detection: ${yolo.label} at [${yolo.boundingBox.left}, ${yolo.boundingBox.top}, ${yolo.boundingBox.right}, ${yolo.boundingBox.bottom}]")
+            
             // Create a simple SimpleDetection object
             SimpleDetection.create(
                 yolo.boundingBox,
@@ -337,7 +396,25 @@ class ObjectDetectorHelper(
                     )
                 )
             )
+        }.toMutableList()
+        
+        // Add a test detection to verify rendering pipeline
+        if (converted.isEmpty()) {
+            Log.d("ObjectDetectorHelper", "No YOLO detections, adding test detection")
+            val testDetection = SimpleDetection.create(
+                android.graphics.RectF(0.2f, 0.2f, 0.8f, 0.8f), // Large visible box
+                listOf(
+                    SimpleDetection.Category.create(
+                        "test",
+                        "test_object",
+                        0.95f
+                    )
+                )
+            )
+            converted.add(testDetection)
         }
+        
+        return converted
     }
 
     interface DetectorListener {
