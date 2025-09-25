@@ -88,13 +88,23 @@ class YoloDetector(
             Log.d(TAG, "Creating interpreter...")
             interpreter = Interpreter(modelBuffer, options)
             
-            // Verify input/output shapes
+            // Verify input/output shapes and set input size from model if not set by metadata
             val inputShape = interpreter?.getInputTensor(0)?.shape()
             val outputShape = interpreter?.getOutputTensor(0)?.shape()
+            
+            // Update input size from model tensor if it wasn't set properly by metadata
+            if (inputShape != null && inputShape.size >= 3) {
+                val modelInputSize = inputShape[1] // Assuming [batch, height, width, channels] format
+                if (modelInputSize != inputSize) {
+                    inputSize = modelInputSize
+                    Log.d(TAG, "Updated input size from model tensor: $inputSize")
+                }
+            }
             
             Log.d(TAG, "Model loaded successfully")
             Log.d(TAG, "Input shape: ${inputShape?.contentToString()}")
             Log.d(TAG, "Output shape: ${outputShape?.contentToString()}")
+            Log.d(TAG, "Final input size: $inputSize")
             Log.d(TAG, "Number of classes: ${classNames.size}")
             
             // Warm up the model with a dummy inference to reduce first-run latency
@@ -137,8 +147,20 @@ class YoloDetector(
         inputBuffer = ByteBuffer.allocateDirect(bufferSize).apply {
             order(ByteOrder.nativeOrder())
         }
-        outputBuffer = Array(1) { Array(84) { FloatArray(8400) } }
-        Log.d(TAG, "Initialized reusable buffers: input=${bufferSize}bytes, output=1x84x8400")
+        
+        // Get actual output shape from the loaded model
+        val outputShape = interpreter?.getOutputTensor(0)?.shape()
+        if (outputShape != null && outputShape.size == 3) {
+            val batchSize = outputShape[0]
+            val numFeatures = outputShape[1] 
+            val numAnchors = outputShape[2]
+            outputBuffer = Array(batchSize) { Array(numFeatures) { FloatArray(numAnchors) } }
+            Log.d(TAG, "Initialized reusable buffers: input=${bufferSize}bytes, output=${batchSize}x${numFeatures}x${numAnchors}")
+        } else {
+            // Fallback to default if shape reading fails
+            outputBuffer = Array(1) { Array(84) { FloatArray(8400) } }
+            Log.w(TAG, "Could not read output shape, using default: input=${bufferSize}bytes, output=1x84x8400")
+        }
     }
     
     /**
@@ -199,7 +221,17 @@ class YoloDetector(
             
             val currentOutputBuffer = outputBuffer ?: run {
                 Log.w(TAG, "Output buffer not initialized, creating new one")
-                Array(1) { Array(84) { FloatArray(8400) } }
+                // Get actual output shape from the loaded model
+                val outputShape = interpreter?.getOutputTensor(0)?.shape()
+                if (outputShape != null && outputShape.size == 3) {
+                    val batchSize = outputShape[0]
+                    val numFeatures = outputShape[1] 
+                    val numAnchors = outputShape[2]
+                    Array(batchSize) { Array(numFeatures) { FloatArray(numAnchors) } }
+                } else {
+                    // Fallback to default if shape reading fails
+                    Array(1) { Array(84) { FloatArray(8400) } }
+                }
             }
             
             // Clear and rewind the input buffer
@@ -238,7 +270,10 @@ class YoloDetector(
                 confidenceThreshold = confidenceThreshold,
                 iouThreshold = iouThreshold,
                 maxResults = maxResults,
-                classNames = classNames
+                classNames = classNames,
+                inputSize = inputSize,
+                originalWidth = image.width,
+                originalHeight = image.height
             )
             
             Log.d(TAG, "Found ${detections.size} detections")
@@ -314,7 +349,7 @@ class YoloDetector(
     }
     
     /**
-     * Load metadata.yaml file to get class names and model info
+     * Load metadata_int8_320.yaml file to get class names and model info
      */
     private fun loadMetadata(metadataPath: String) {
         try {

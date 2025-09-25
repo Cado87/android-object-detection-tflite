@@ -73,7 +73,7 @@ class ObjectDetectorHelper(
     
     // Track whether we're using YOLO or Task API
     private val isYoloModel: Boolean
-        get() = currentModel == MODEL_YOLO11N_FLOAT16 || currentModel == MODEL_YOLO11N_FLOAT32
+        get() = currentModel == MODEL_YOLO11N_FLOAT16_640 || currentModel == MODEL_YOLO11N_INT8_320
 
     init {
         setupObjectDetector()
@@ -139,13 +139,19 @@ class ObjectDetectorHelper(
             )
             
             val modelName = when (currentModel) {
-                MODEL_YOLO11N_FLOAT16 -> "yolo11n_float16.tflite"
-                MODEL_YOLO11N_FLOAT32 -> "yolo11n_float32.tflite"
-                else -> "yolo11n_float32.tflite"
+                MODEL_YOLO11N_FLOAT16_640 -> "yolo11n_float16_640.tflite"
+                MODEL_YOLO11N_INT8_320 -> "yolo11n_int8_320.tflite"
+                else -> "yolo11n_int8_320.tflite"
             }
             
-            Log.d("ObjectDetectorHelper", "Loading YOLO model: $modelName")
-            val success = yoloDetector?.loadModel(modelName, "metadata.yaml")
+            val metadataName = when (currentModel) {
+                MODEL_YOLO11N_FLOAT16_640 -> "metadata_float16_640.yaml"
+                MODEL_YOLO11N_INT8_320 -> "metadata_int8_320.yaml"
+                else -> "metadata_int8_320.yaml"
+            }
+            
+            Log.d("ObjectDetectorHelper", "Loading YOLO model: $modelName with metadata: $metadataName")
+            val success = yoloDetector?.loadModel(modelName, metadataName)
             if (success != true) {
                 objectDetectorListener?.onError("Failed to load YOLO model: $modelName")
                 yoloDetector?.close()
@@ -398,22 +404,6 @@ class ObjectDetectorHelper(
             )
         }.toMutableList()
         
-        // Add a test detection to verify rendering pipeline
-        if (converted.isEmpty()) {
-            Log.d("ObjectDetectorHelper", "No YOLO detections, adding test detection")
-            val testDetection = SimpleDetection.create(
-                android.graphics.RectF(0.2f, 0.2f, 0.8f, 0.8f), // Large visible box
-                listOf(
-                    SimpleDetection.Category.create(
-                        "test",
-                        "test_object",
-                        0.95f
-                    )
-                )
-            )
-            converted.add(testDetection)
-        }
-        
         return converted
     }
 
@@ -435,7 +425,7 @@ class ObjectDetectorHelper(
         const val MODEL_EFFICIENTDETV0 = 1
         const val MODEL_EFFICIENTDETV1 = 2
         const val MODEL_EFFICIENTDETV2 = 3
-        const val MODEL_YOLO11N_FLOAT16 = 4
-        const val MODEL_YOLO11N_FLOAT32 = 5
+        const val MODEL_YOLO11N_FLOAT16_640 = 4
+        const val MODEL_YOLO11N_INT8_320 = 5
     }
 }

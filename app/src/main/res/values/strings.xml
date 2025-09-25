@@ -50,6 +50,6 @@
         <item>EfficientDet Lite1</item>
         <item>EfficientDet Lite2</item>
         <item>YOLO11n Float16</item>
-        <item>YOLO11n Float32</item>
+        <item>YOLO11n INT8</item>
     </string-array>
 </resources>

@@ -86,13 +86,16 @@ class OverlayView(context: Context?, attrs: AttributeSet?) : View(context, attrs
             val right: Float
             
             if (isNormalized) {
-                // For YOLO normalized coordinates (0-1), directly map to view coordinates
-                // YOLO postprocessor already handles aspect ratio correction
-                val horizontalOffset = 50f  // Adjust this value to move box left/right
-                left = boundingBox.left * width + horizontalOffset
+                // TEMPORARY: Simple direct mapping to debug coordinate issues
+                // Map normalized coordinates directly to full view dimensions
+                left = boundingBox.left * width
                 top = boundingBox.top * height
-                right = boundingBox.right * width + horizontalOffset
+                right = boundingBox.right * width
                 bottom = boundingBox.bottom * height
+                
+                Log.d("OverlayView", "TEMP: Direct mapping - normalized: [${boundingBox.left}, ${boundingBox.top}, ${boundingBox.right}, ${boundingBox.bottom}]")
+                Log.d("OverlayView", "TEMP: Direct mapping - screen: [${left}, ${top}, ${right}, ${bottom}]")
+                Log.d("OverlayView", "TEMP: View dimensions: ${width}x${height}, Image dimensions: ${imageWidth}x${imageHeight}")
             } else {
                 // Use traditional scaling for Task API pixel coordinates
                 left = boundingBox.left * scaleFactor

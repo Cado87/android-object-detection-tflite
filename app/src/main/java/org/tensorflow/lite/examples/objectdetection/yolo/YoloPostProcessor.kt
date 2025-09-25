@@ -17,15 +17,23 @@ object YoloPostProcessor {
         confidenceThreshold: Float,
         iouThreshold: Float,
         maxResults: Int,
-        classNames: Array<String>
+        classNames: Array<String>,
+        inputSize: Int = 640,
+        originalWidth: Int,
+        originalHeight: Int
     ): List<YoloDetection> {
         
         val detections = mutableListOf<YoloDetection>()
         
-        // YOLO11n output format: [84, 8400] where 84 = [x, y, w, h, 80 class scores]
-        val numDetections = output[0].size // 8400
+        // YOLO11n output format: [84, numDetections] where 84 = [x, y, w, h, 80 class scores]
+        val numDetections = output[0].size // 8400 for 640x640, 2100 for 320x320
         val numClasses = classNames.size // 80
-        val inputSize = 640f // YOLO model input size
+        val inputSizeFloat = inputSize.toFloat() // YOLO model input size (320 or 640)
+        
+        // Calculate scaling factors to map from square model input back to rectangular original image
+        // The image was resized from originalWidth x originalHeight to inputSize x inputSize
+        val scaleX = originalWidth.toFloat() / inputSizeFloat
+        val scaleY = originalHeight.toFloat() / inputSizeFloat
         
         // Extract detections above confidence threshold
         for (i in 0 until numDetections) {
@@ -36,11 +44,11 @@ object YoloPostProcessor {
             val rawW = output[2][i]
             val rawH = output[3][i]
             
-            // Scale up the coordinates - they appear to be in a very small range
-            val x = rawX * inputSize
-            val y = rawY * inputSize
-            val w = rawW * inputSize
-            val h = rawH * inputSize
+            // Scale coordinates from model input space to original image pixel space
+            val x = rawX * inputSizeFloat * scaleX
+            val y = rawY * inputSizeFloat * scaleY
+            val w = rawW * inputSizeFloat * scaleX
+            val h = rawH * inputSizeFloat * scaleY
             
             // Find the class with highest confidence
             var maxScore = 0f
@@ -56,25 +64,26 @@ object YoloPostProcessor {
             
             // Apply confidence threshold
             if (maxScore >= confidenceThreshold && maxClass < classNames.size) {
-                // Convert from center coordinates to corner coordinates in pixel space
+                // Convert from center coordinates to corner coordinates in original image pixel space
                 val left = x - w / 2f
                 val top = y - h / 2f
                 val right = x + w / 2f
                 val bottom = y + h / 2f
                 
-                // Now normalize to [0,1] range for consistency with other models
-                val normalizedLeft = (left / inputSize).coerceIn(0f, 1f)
-                val normalizedTop = (top / inputSize).coerceIn(0f, 1f)
-                val normalizedRight = (right / inputSize).coerceIn(0f, 1f)
-                val normalizedBottom = (bottom / inputSize).coerceIn(0f, 1f)
+                // Normalize to [0,1] range based on original image dimensions
+                val normalizedLeft = (left / originalWidth).coerceIn(0f, 1f)
+                val normalizedTop = (top / originalHeight).coerceIn(0f, 1f)
+                val normalizedRight = (right / originalWidth).coerceIn(0f, 1f)
+                val normalizedBottom = (bottom / originalHeight).coerceIn(0f, 1f)
                 
                 // Debug logging for coordinate transformation
                 android.util.Log.d("YoloPostProcessor", 
                     "Detection: class=${classNames[maxClass]} conf=$maxScore " +
                     "raw_coords=($rawX, $rawY, $rawW, $rawH) " +
-                    "scaled=($x, $y, $w, $h) " +
+                    "scaled_to_original=($x, $y, $w, $h) " +
                     "bbox_pixels=($left, $top, $right, $bottom) " +
-                    "bbox_normalized=($normalizedLeft, $normalizedTop, $normalizedRight, $normalizedBottom)")
+                    "bbox_normalized=($normalizedLeft, $normalizedTop, $normalizedRight, $normalizedBottom) " +
+                    "scaleFactors=($scaleX, $scaleY)")
                 
                 val boundingBox = RectF(
                     normalizedLeft,

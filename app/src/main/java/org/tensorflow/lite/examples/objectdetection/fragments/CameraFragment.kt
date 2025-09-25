@@ -289,6 +289,7 @@ class CameraFragment : Fragment(), ObjectDetectorHelper.DetectorListener {
         image.use { bitmapBuffer.copyPixelsFromBuffer(image.planes[0].buffer) }
 
         val imageRotation = image.imageInfo.rotationDegrees
+        Log.d("CameraFragment", "Image rotation: $imageRotation degrees")
         // Pass Bitmap and rotation to the object detector helper for processing and detection
         objectDetectorHelper.detect(bitmapBuffer, imageRotation)
     }
