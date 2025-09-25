@@ -42,7 +42,7 @@ import java.util.concurrent.Executors
 import org.tensorflow.lite.examples.objectdetection.ObjectDetectorHelper
 import org.tensorflow.lite.examples.objectdetection.R
 import org.tensorflow.lite.examples.objectdetection.databinding.FragmentCameraBinding
-import org.tensorflow.lite.task.vision.detector.Detection
+import org.tensorflow.lite.examples.objectdetection.SimpleDetection
 
 class CameraFragment : Fragment(), ObjectDetectorHelper.DetectorListener {
 
@@ -203,6 +203,10 @@ class CameraFragment : Fragment(), ObjectDetectorHelper.DetectorListener {
         // Needs to be cleared instead of reinitialized because the GPU
         // delegate needs to be initialized on the thread using it when applicable
         objectDetectorHelper.clearObjectDetector()
+        
+        // Reinitialize the detector with new settings/model
+        objectDetectorHelper.setupObjectDetector()
+        
         fragmentCameraBinding.overlay.clear()
     }
 
@@ -285,6 +289,7 @@ class CameraFragment : Fragment(), ObjectDetectorHelper.DetectorListener {
         image.use { bitmapBuffer.copyPixelsFromBuffer(image.planes[0].buffer) }
 
         val imageRotation = image.imageInfo.rotationDegrees
+        Log.d("CameraFragment", "Image rotation: $imageRotation degrees")
         // Pass Bitmap and rotation to the object detector helper for processing and detection
         objectDetectorHelper.detect(bitmapBuffer, imageRotation)
     }
@@ -297,7 +302,7 @@ class CameraFragment : Fragment(), ObjectDetectorHelper.DetectorListener {
     // Update UI after objects have been detected. Extracts original image height/width
     // to scale and place bounding boxes properly through OverlayView
     override fun onResults(
-      results: MutableList<Detection>?,
+      results: MutableList<SimpleDetection>?,
       inferenceTime: Long,
       imageHeight: Int,
       imageWidth: Int
@@ -308,7 +313,7 @@ class CameraFragment : Fragment(), ObjectDetectorHelper.DetectorListener {
 
             // Pass necessary information to OverlayView for drawing on the canvas
             fragmentCameraBinding.overlay.setResults(
-                results ?: LinkedList<Detection>(),
+                results ?: LinkedList<SimpleDetection>(),
                 imageHeight,
                 imageWidth
             )

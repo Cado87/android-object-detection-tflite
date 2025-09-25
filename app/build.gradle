@@ -125,8 +125,18 @@ dependencies {
     androidTestImplementation "androidx.test:runner:1.4.0"
     androidTestImplementation "androidx.test.espresso:espresso-core:3.4.0"
 
+    // TensorFlow Lite Task API for traditional models
     implementation 'org.tensorflow:tensorflow-lite-task-vision:0.4.0'
     // Import the GPU delegate plugin Library for GPU inference
     implementation 'org.tensorflow:tensorflow-lite-gpu-delegate-plugin:0.4.0'
+    
+    // Add TensorFlow Lite Interpreter for YOLO - using compatible version
+    implementation('org.tensorflow:tensorflow-lite:2.9.0') {
+        exclude group: 'org.tensorflow', module: 'tensorflow-lite-api'
+    }
+    // Add support libraries needed for YOLO preprocessing
+    implementation 'org.tensorflow:tensorflow-lite-support:0.4.0'
     implementation 'org.tensorflow:tensorflow-lite-gpu:2.9.0'
+    // Add SnakeYAML for metadata parsing
+    implementation 'org.yaml:snakeyaml:1.33'
 }
